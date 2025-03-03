@@ -1,0 +1,21 @@
+volumes:
+  open_api_postgres_data: {}
+
+services:
+  fast-api:
+    restart: always
+    build:
+      context: .
+      dockerfile: ./Dockerfile-local
+    ports:
+      - "8070:8070"
+    volumes:
+      - .:/project
+    expose:
+      - 8000
+    env_file:
+      - .env
+
+networks:
+  default:
+    name: remofirst_hackathon

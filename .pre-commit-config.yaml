@@ -1,0 +1,31 @@
+fail_fast: true
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: "v4.5.0"
+    hooks:
+      - id: check-merge-conflict
+      - id: debug-statements
+  - repo: https://github.com/psf/black
+    rev: 23.12.1
+    hooks:
+      - id: black
+        additional_dependencies: [ 'click==8.0.4' ]
+        args: [ --line-length=88, --exclude='/migrations/' ]
+  - repo: https://github.com/PyCQA/autoflake
+    rev: "v2.2.1"
+    hooks:
+      - id: autoflake
+        args: [ --in-place, --remove-all-unused-imports, --remove-duplicate-keys ]
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        args: [ '--ignore=E203,W503,W605,C819,PT013,EXE002,A003,R504,C901,E722,W505,W291', '--max-line-length=120' ]
+        exclude: ^migrations/
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: [ "--profile", "black", --line-length=88 ]
+
+
