@@ -170,7 +170,7 @@ async def generate_questions():
     Each question is returned as an object with an id, text, type, and category.
     """
     tech_prompt = (
-        "Generate 3 interview questions focused on React performance. "
+        "Generate 2 interview questions focused on React performance. "
         "Return only the questions, each on a new line, with no numbering or additional commentary."
     )
 
@@ -191,7 +191,7 @@ async def generate_questions():
     tech_lines = [line.strip() for line in tech_response_text.split("\n") if line.strip()]
 
     behav_prompt = (
-        "Generate 2 behavioral interview questions focused on teamwork and communication in a software development environment. "
+        "Generate 1 behavioral interview questions focused on teamwork and communication in a software development environment. "
         "Return only the questions, each on a new line, with no numbering or additional commentary."
     )
 
