@@ -85,16 +85,15 @@ async def clear_history():
 @app.get("/questions")
 async def generate_questions():
     """
-    Generates interview questions for a front-end React developer using OpenAI.
-    The returned questions are expected to be a JSON array of objects with the keys:
-    id, text, type, and category.
+    Generates interview questions focused on React performance.
+
+    The prompt instructs OpenAI to return 8 questions, one per line.
+    The endpoint then iterates over each line, constructs an object for each question,
+    and returns a list of these objects.
     """
     prompt = (
-        "Generate a JSON array of 8 interview questions for a front-end React developer. "
-        "Each question should be an object with the following keys: "
-        "id (string), text (the question text), type (technical or behavioral), and category (e.g., 'Performance', 'React Basics', etc.). "
-        "Example object: {\"id\": \"1\", \"text\": \"How would you optimize a slow React application?\", \"type\": \"technical\", \"category\": \"Performance\"}. "
-        "Return only the JSON array."
+        "Generate 5 interview questions focused on React performance. "
+        "Return only the questions, each on a new line, with no numbering or additional commentary."
     )
 
     try:
@@ -108,11 +107,23 @@ async def generate_questions():
             max_tokens=300,
         )
         response_text = completion.choices[0].message.content.strip()
-        # Attempt to parse the response as JSON
-        questions = json.loads(response_text)
-        return questions
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating questions: {e}")
+
+    # Split the response into individual lines and remove empty lines
+    lines = [line.strip() for line in response_text.split("\n") if line.strip()]
+
+    # Build a list of question objects
+    questions = []
+    for i, line in enumerate(lines, start=1):
+        questions.append({
+            "id": str(i),
+            "text": line,
+            "type": "technical",
+            "category": "Performance"
+        })
+
+    return questions
 
 
 def transcribe_audio(file: UploadFile):
