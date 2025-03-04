@@ -42,6 +42,7 @@ async def root():
 
 class QuestionResponse(BaseModel):
     questionId: str
+    questionText: str
     audioBlob: str  # Base64-encoded audio data
 
 
@@ -52,15 +53,92 @@ async def submit_responses(responses: List[QuestionResponse]):
         try:
             audio_data = base64.b64decode(response.audioBlob)
         except Exception as e:
-            raise HTTPException(status_code=400,
-                                detail=f"Error decoding audio for question {response.questionId}: {str(e)}")
-
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error decoding audio for question {response.questionId}: {str(e)}"
+            )
         transcript = transcribe_audio_from_bytes(response.questionId, audio_data)
+        transcript_text = transcript.get("text") if isinstance(transcript, dict) else transcript
+
+        evaluation_result = evaluate_transcript(transcript_text)
         results.append({
             "questionId": response.questionId,
-            "transcript": transcript
+            "questionText": response.questionText,
+            "answerText": transcript_text,
+            "score": evaluation_result.get("evaluation", 50),
+            "feedback": evaluation_result.get("comment", "No comment provided.")
         })
     return {"results": results}
+
+
+def transcribe_audio(file: UploadFile):
+    """
+    Saves the uploaded file temporarily, transcribes it using OpenAI Whisper,
+    and then removes the temporary file.
+    """
+    try:
+        with open(file.filename, 'wb') as buffer:
+            buffer.write(file.file.read())
+        with open(file.filename, "rb") as audio_file:
+            transcript = openai.Audio.transcribe(model="whisper-1", file=audio_file)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
+    finally:
+        if os.path.exists(file.filename):
+            os.remove(file.filename)
+    print(transcript)
+    return transcript
+
+
+def transcribe_audio_from_bytes(identifier: str, audio_bytes: bytes) -> dict:
+    """
+    Writes binary audio data to a temporary file and transcribes it using OpenAI Whisper.
+    """
+    temp_filename = f"temp_{identifier}.wav"
+    try:
+        with open(temp_filename, "wb") as f:
+            f.write(audio_bytes)
+        with open(temp_filename, "rb") as audio_file:
+            transcript = openai.Audio.transcribe(model="whisper-1", file=audio_file)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription from bytes failed: {e}")
+    finally:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+    print(transcript)
+    return transcript
+
+
+def evaluate_transcript(transcript: str) -> dict:
+    """
+    Sends the transcript to OpenAI for evaluation.
+    The prompt instructs the model to evaluate the transcript on a scale of 1 to 100
+    and return a JSON object with keys:
+      - evaluation: an integer score (1-100, where 1 is worst and 100 is best)
+      - comment: a brief feedback comment.
+    """
+    prompt = (
+        "Evaluate the following interview transcript on a scale of 1 to 100, where 1 is the worst and 100 is the best. "
+        "Also provide a brief comment explaining your evaluation. Return the result as a JSON object with keys 'evaluation' and 'comment'.\n\n"
+        f"Transcript:\n{transcript}"
+    )
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an expert interviewer."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=150,
+        )
+        response_text = completion.choices[0].message.content.strip()
+        evaluation_data = json.loads(response_text)
+        return evaluation_data
+    except Exception as e:
+        print(f"Error in evaluation: {e}")
+        return {"evaluation": 50, "comment": "Could not evaluate transcript."}
+
 
 
 @app.post("/talk")
@@ -85,37 +163,65 @@ async def clear_history():
 @app.get("/questions")
 async def generate_questions():
     """
-    Generates interview questions focused on React performance.
+    Generates interview questions in two parts:
+      - 3 technical questions focused on React performance.
+      - 2 behavioral questions focused on teamwork and communication.
 
-    The prompt instructs OpenAI to return 8 questions, one per line.
-    The endpoint then iterates over each line, constructs an object for each question,
-    and returns a list of these objects.
+    Each question is returned as an object with an id, text, type, and category.
     """
-    prompt = (
-        "Generate 5 interview questions focused on React performance. "
+    tech_prompt = (
+        "Generate 3 interview questions focused on React performance. "
         "Return only the questions, each on a new line, with no numbering or additional commentary."
     )
 
     try:
-        completion = openai.ChatCompletion.create(
+        tech_completion = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that generates interview questions."},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": tech_prompt}
             ],
             temperature=0.7,
             max_tokens=300,
         )
-        response_text = completion.choices[0].message.content.strip()
+        tech_response_text = tech_completion.choices[0].message.content.strip()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating questions: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generating technical questions: {e}")
 
-    # Split the response into individual lines and remove empty lines
-    lines = [line.strip() for line in response_text.split("\n") if line.strip()]
+    tech_lines = [line.strip() for line in tech_response_text.split("\n") if line.strip()]
 
-    # Build a list of question objects
+    behav_prompt = (
+        "Generate 2 behavioral interview questions focused on teamwork and communication in a software development environment. "
+        "Return only the questions, each on a new line, with no numbering or additional commentary."
+    )
+
+    try:
+        behav_completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that generates interview questions."},
+                {"role": "user", "content": behav_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=300,
+        )
+        behav_response_text = behav_completion.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating behavioral questions: {e}")
+
+    behav_lines = [line.strip() for line in behav_response_text.split("\n") if line.strip()]
+
     questions = []
-    for i, line in enumerate(lines, start=1):
+
+    for j, line in enumerate(behav_lines, start=len(tech_lines) + 1):
+        questions.append({
+            "id": str(j),
+            "text": line,
+            "type": "behavioral",
+            "category": "Behavioral"
+        })
+
+    for i, line in enumerate(tech_lines, start=1):
         questions.append({
             "id": str(i),
             "text": line,
@@ -125,30 +231,6 @@ async def generate_questions():
 
     return questions
 
-
-def transcribe_audio(file: UploadFile):
-    # Save the blob first
-    with open(file.filename, 'wb') as buffer:
-        buffer.write(file.file.read())
-    with open(file.filename, "rb") as audio_file:
-        transcript = openai.Audio.transcribe(model="whisper-1", file=audio_file)
-    os.remove(file.filename)
-    print(transcript)
-    return transcript
-
-
-def transcribe_audio_from_bytes(identifier: str, audio_bytes: bytes) -> dict:
-    """
-    Writes binary audio data to a temporary file and transcribes it using OpenAI Whisper.
-    """
-    temp_filename = f"temp_{identifier}.wav"
-    with open(temp_filename, "wb") as f:
-        f.write(audio_bytes)
-    with open(temp_filename, "rb") as audio_file:
-        transcript = openai.Audio.transcribe(model="whisper-1", file=audio_file)
-    os.remove(temp_filename)
-    print(transcript)
-    return transcript
 
 
 def get_chat_response(user_message):
