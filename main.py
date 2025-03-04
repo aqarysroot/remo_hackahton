@@ -36,6 +36,29 @@ async def root():
     return {"message": "Hello World"}
 
 
+class QuestionResponse(BaseModel):
+    questionId: str
+    audioBlob: str  # Base64-encoded audio data
+
+
+@app.post("/submit-responses")
+async def submit_responses(responses: List[QuestionResponse]):
+    results = []
+    for response in responses:
+        try:
+            audio_data = base64.b64decode(response.audioBlob)
+        except Exception as e:
+            raise HTTPException(status_code=400,
+                                detail=f"Error decoding audio for question {response.questionId}: {str(e)}")
+
+        transcript = transcribe_audio_from_bytes(response.questionId, audio_data)
+        results.append({
+            "questionId": response.questionId,
+            "transcript": transcript
+        })
+    return {"results": results}
+
+
 @app.post("/talk")
 async def post_audio(file: UploadFile):
     user_message = transcribe_audio(file)
@@ -66,12 +89,25 @@ def transcribe_audio(file):
     return transcript
 
 
+def transcribe_audio_from_bytes(identifier: str, audio_bytes: bytes) -> dict:
+    """
+    Writes binary audio data to a temporary file and transcribes it using OpenAI Whisper.
+    """
+    temp_filename = f"temp_{identifier}.wav"
+    with open(temp_filename, "wb") as f:
+        f.write(audio_bytes)
+    with open(temp_filename, "rb") as audio_file:
+        transcript = openai.Audio.transcribe("whisper-1", audio_file)
+    os.remove(temp_filename)
+    print(transcript)
+    return transcript
+
 def get_chat_response(user_message):
     messages = load_messages()
     messages.append({"role": "user", "content": user_message['text']})
 
     # Send to ChatGpt/OpenAi
-    gpt_response = gpt_response = openai.ChatCompletion.create(
+    gpt_response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=messages
     )
