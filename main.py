@@ -405,6 +405,109 @@ def evaluate_coding_answer(question: str, answer: str) -> dict:
         print(f"Error in evaluation: {e}")
         return {"evaluation": 50, "comment": "Could not evaluate answer."}
 
+@app.post("/generate-interview-questions")
+async def generate_interview_questions(
+    job_description: str = Form(...),
+    cv_file: UploadFile = File(...)
+):
+    """
+    Accepts a job description as a form field and a candidate's CV as a file upload.
+    If the file is a PDF, extracts the text using a PDF reader; otherwise, decodes the file.
+    Then uses the job description and candidate CV to generate interview questions:
+      - 3 technical questions that are specifically relevant to the job description.
+      - 2 behavioral questions that assess soft skills related to the role.
+    Each question is returned as an object with an id, text, type, and category.
+    """
+    try:
+        # Check if the file is a PDF based on the content type or file extension.
+        if cv_file.content_type == "application/pdf" or cv_file.filename.lower().endswith(".pdf"):
+            cv_bytes = await cv_file.read()
+            pdf_reader = PdfReader(BytesIO(cv_bytes))
+            cv_text = ""
+            for page in pdf_reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    cv_text += page_text + "\n"
+        else:
+            # For non-PDF files, try to decode as text.
+            cv_bytes = await cv_file.read()
+            try:
+                cv_text = cv_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                cv_text = cv_bytes.decode("latin-1")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading CV file: {e}")
+
+    # Construct prompts that explicitly require questions to be relevant to the job description.
+    tech_prompt = (
+        "Based on the following job description and candidate CV, generate 3 technical interview questions "
+        "that assess the candidate's technical skills and overall fit for the role. "
+        "IMPORTANT: The job description is for a Senior Python Developer. Ensure that the questions are "
+        "specifically related to Python, relevant frameworks, and best practices expected at a senior level, "
+        "and do not mention unrelated technologies.\n\n"
+        f"Job Description:\n{job_description}\n\nCandidate CV:\n{cv_text}"
+    )
+
+    behav_prompt = (
+        "Based on the following job description and candidate CV, generate 2 behavioral interview questions "
+        "that assess the candidate's soft skills, teamwork, communication, and problem-solving abilities, "
+        "relevant to the role of a Senior Python Developer. "
+        "Return only the questions, each on a new line, with no numbering or additional commentary.\n\n"
+        f"Job Description:\n{job_description}\n\nCandidate CV:\n{cv_text}"
+    )
+
+    try:
+        tech_completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that generates interview questions."},
+                {"role": "user", "content": tech_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=300,
+        )
+        tech_response_text = tech_completion.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating technical questions: {e}")
+
+    tech_lines = [line.strip() for line in tech_response_text.split("\n") if line.strip()]
+
+    try:
+        behav_completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that generates interview questions."},
+                {"role": "user", "content": behav_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=300,
+        )
+        behav_response_text = behav_completion.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating behavioral questions: {e}")
+
+    behav_lines = [line.strip() for line in behav_response_text.split("\n") if line.strip()]
+
+    questions = []
+    # Add technical questions.
+    for i, line in enumerate(tech_lines, start=1):
+        questions.append({
+            "id": str(i),
+            "text": line,
+            "type": "technical",
+            "category": "Technical"
+        })
+    # Add behavioral questions.
+    for j, line in enumerate(behav_lines, start=len(tech_lines) + 1):
+        questions.append({
+            "id": str(j),
+            "text": line,
+            "type": "behavioral",
+            "category": "Behavioral"
+        })
+
+    return JSONResponse(content=questions)
+
 
 @app.post("/evaluate-cv")
 async def evaluate_cv(
