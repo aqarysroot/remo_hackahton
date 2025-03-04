@@ -332,7 +332,8 @@ async def coding_question():
     prompt = (
         "Give me a simple coding question related to JavaScript or React. "
         "Also provide sample input and sample output for the question if applicable. "
-        "Return the result as a valid JSON object with keys 'question', 'input_samples', and 'output_samples'."
+        "Return the result as a valid JSON object with keys 'question', 'input_samples', and 'output_samples'. "
+        "Do not wrap your JSON in markdown formatting or code fences, and do not include any extra text."
     )
     try:
         completion = openai.ChatCompletion.create(
@@ -345,10 +346,22 @@ async def coding_question():
             max_tokens=200,
         )
         response_text = completion.choices[0].message.content.strip()
+
+        # Remove markdown code fences if present.
+        if response_text.startswith("```"):
+            lines = response_text.splitlines()
+            # Remove first line if it's a code fence (e.g. ```json)
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            # Remove the last line if it's a code fence.
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            response_text = "\n".join(lines).strip()
+
         try:
             result = json.loads(response_text)
         except json.JSONDecodeError:
-            # In case the response is not valid JSON, fall back to a simple text response.
+            # Fallback if the response is still not valid JSON.
             result = {
                 "question": response_text,
                 "input_samples": None,
@@ -356,7 +369,7 @@ async def coding_question():
             }
         return JSONResponse(content=result)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating coding question")
+        raise HTTPException(status_code=500, detail=f"Error generating coding question: {e}")
 
 
 class CodingEvaluation(BaseModel):
