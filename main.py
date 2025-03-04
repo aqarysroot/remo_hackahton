@@ -10,6 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 from dotenv import load_dotenv
+from io import BytesIO
+from PyPDF2 import PdfReader
+
 
 load_dotenv()
 
@@ -401,6 +404,128 @@ def evaluate_coding_answer(question: str, answer: str) -> dict:
     except Exception as e:
         print(f"Error in evaluation: {e}")
         return {"evaluation": 50, "comment": "Could not evaluate answer."}
+
+
+@app.post("/evaluate-cv")
+async def evaluate_cv(
+    job_description: str = Form(...),
+    cv_file: UploadFile = File(...)
+):
+    """
+    Accepts a job description as a form field and a candidate's CV as a file upload.
+    If the file is a PDF, extracts the text using a PDF reader; otherwise, decodes the file.
+    Processes the CV text and then evaluates how well it matches the job description.
+    Returns a JSON object with 'evaluation' (score between 1 and 100) and 'comment' (feedback).
+    """
+    try:
+        # Check if the file is a PDF based on the content type or file extension.
+        if cv_file.content_type == "application/pdf" or cv_file.filename.lower().endswith(".pdf"):
+            cv_bytes = await cv_file.read()
+            pdf_reader = PdfReader(BytesIO(cv_bytes))
+            cv_text = ""
+            for page in pdf_reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    cv_text += page_text + "\n"
+        else:
+            # For non-PDF files, try to decode as text
+            cv_bytes = await cv_file.read()
+            try:
+                cv_text = cv_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                cv_text = cv_bytes.decode("latin-1")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading CV file: {e}")
+
+    # Process the CV text to extract relevant content
+    processed_cv_text = await asyncio.to_thread(process_cv_text, cv_text)
+    print("Processed CV Text:", processed_cv_text)
+
+    # Evaluate the candidate's fit using the processed CV text
+    result = await asyncio.to_thread(evaluate_candidate_cv, job_description, processed_cv_text)
+    print("Evaluation Result:", result)
+    return JSONResponse(content=result)
+
+
+def process_cv_text(cv: str) -> str:
+    """
+    Processes the candidate's CV text to extract the relevant information.
+    The assistant cleans up the CV by keeping details about education, experience, skills, and achievements.
+    Returns the cleaned/summarized text.
+    """
+    prompt = (
+        "Please extract and clean the relevant information from the following candidate CV. "
+        "Focus on education, work experience, skills, and achievements. "
+        "Return only the cleaned text without any extra commentary.\n\n"
+        f"CV:\n{cv}"
+    )
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an assistant that cleans and summarizes candidate CVs."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5,
+            max_tokens=300,
+        )
+        result_text = completion.choices[0].message.content.strip()
+        return result_text
+    except Exception as e:
+        print(f"Error processing CV text: {e}")
+        # Fallback: return the original CV text if processing fails
+        return cv
+
+
+def evaluate_candidate_cv(job_description: str, cv: str) -> dict:
+    """
+    Uses the provided job description and candidate CV to evaluate the candidate's fit for the job.
+    Returns a JSON object with keys 'evaluation' (score between 1 and 100) and 'comment' (feedback).
+    """
+    prompt = (
+        "You are an experienced hiring manager evaluating a candidate's CV against a job description. "
+        "Evaluate how well the candidate's CV fits the job description on a scale of 1 to 100, "
+        "where 1 indicates a very poor fit and 100 indicates an excellent fit. "
+        "Provide a brief comment explaining your evaluation. "
+        "Return ONLY a valid JSON object with keys 'evaluation' and 'comment', with no additional text.\n\n"
+        f"Job Description:\n{job_description}\n\n"
+        f"Candidate CV:\n{cv}"
+    )
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an experienced hiring manager."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=150,
+        )
+        response_text = completion.choices[0].message.content.strip()
+        # Print raw response for debugging purposes
+        print("Raw evaluation response:", response_text)
+        if not response_text:
+            print("Empty response received.")
+            return {"evaluation": 50, "comment": "Could not evaluate the CV."}
+        try:
+            evaluation_data = json.loads(response_text)
+        except json.JSONDecodeError as json_err:
+            print("JSON decode error:", json_err, "Response:", response_text)
+            # Attempt to extract a JSON substring from the response_text
+            start = response_text.find("{")
+            end = response_text.rfind("}") + 1
+            if start != -1 and end != -1:
+                try:
+                    evaluation_data = json.loads(response_text[start:end])
+                except Exception as e:
+                    print("Fallback JSON extraction failed:", e)
+                    evaluation_data = {"evaluation": 50, "comment": response_text}
+            else:
+                evaluation_data = {"evaluation": 50, "comment": response_text}
+        return evaluation_data
+    except Exception as e:
+        print(f"Error evaluating CV: {e}")
+        return {"evaluation": 50, "comment": "Could not evaluate the CV."}
 
 # 1. Send in audio, and have it transcribed
 # 2. We want to send it to chatgpt and get a response
