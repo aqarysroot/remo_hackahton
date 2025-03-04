@@ -319,6 +319,89 @@ def text_to_speech(text):
     except Exception as e:
         print(e)
 
+
+@app.get("/coding-question")
+async def coding_question():
+    """
+    Returns a simple coding question related to JavaScript or React,
+    along with sample input and sample output.
+    """
+    prompt = (
+        "Give me a simple coding question related to JavaScript or React. "
+        "Also provide sample input and sample output for the question if applicable. "
+        "Return the result as a valid JSON object with keys 'question', 'input_samples', and 'output_samples'."
+    )
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=200,
+        )
+        response_text = completion.choices[0].message.content.strip()
+        try:
+            result = json.loads(response_text)
+        except json.JSONDecodeError:
+            # In case the response is not valid JSON, fall back to a simple text response.
+            result = {
+                "question": response_text,
+                "input_samples": None,
+                "output_samples": None
+            }
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating coding question")
+
+
+class CodingEvaluation(BaseModel):
+    question: str
+    answer: str
+
+
+@app.post("/evaluate-answer")
+async def evaluate_answer(evaluation: CodingEvaluation):
+    """
+    Accepts a coding question and answer, then evaluates the answer on a scale of 1 to 100.
+    Returns a JSON object with 'evaluation' (score) and 'comment' (feedback).
+    """
+    result = await asyncio.to_thread(evaluate_coding_answer, evaluation.question, evaluation.answer)
+    return JSONResponse(content=result)
+
+
+def evaluate_coding_answer(question: str, answer: str) -> dict:
+    """
+    Evaluates a coding question and its answer on a scale of 1 to 100.
+    Considers accuracy, clarity, and completeness.
+    Returns a JSON object with keys 'evaluation' and 'comment'.
+    """
+    prompt = (
+        "Evaluate the following coding question and its answer on a scale of 1 to 100, where 1 is the worst and 100 is the best. "
+        "Consider how accurately, clearly, and completely the answer addresses the question. "
+        "Provide a brief comment explaining your evaluation. "
+        "Return the result as a valid JSON object with keys 'evaluation' and 'comment'.\n\n"
+        f"Question:\n{question}\n\n"
+        f"Answer:\n{answer}"
+    )
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a programming expert."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=150,
+        )
+        response_text = completion.choices[0].message.content.strip()
+        evaluation_data = json.loads(response_text)
+        return evaluation_data
+    except Exception as e:
+        print(f"Error in evaluation: {e}")
+        return {"evaluation": 50, "comment": "Could not evaluate answer."}
+
 # 1. Send in audio, and have it transcribed
 # 2. We want to send it to chatgpt and get a response
 # 3. We want to save the chat history to send back and forth for context.
