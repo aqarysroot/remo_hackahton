@@ -46,9 +46,8 @@ class QuestionResponse(BaseModel):
     questionText: str
     audioBlob: str  # Base64-encoded audio data
 
-
 @app.post("/submit-responses")
-async def submit_responses(responses: List[QuestionResponse]):
+async def submit_responses(responses: list[QuestionResponse]):
     async def process_response(response: QuestionResponse):
         try:
             audio_data = base64.b64decode(response.audioBlob)
@@ -57,10 +56,17 @@ async def submit_responses(responses: List[QuestionResponse]):
                 status_code=400,
                 detail=f"Error decoding audio for question {response.questionId}: {str(e)}"
             )
-        transcript = await asyncio.to_thread(transcribe_audio_from_bytes, response.questionId, audio_data)
+
+        # Transcribe audio from bytes
+        transcript = await asyncio.to_thread(
+            transcribe_audio_from_bytes, response.questionId, audio_data
+        )
         transcript_text = transcript.get("text") if isinstance(transcript, dict) else transcript
 
-        evaluation_result = await asyncio.to_thread(evaluate_transcript, transcript_text)
+        # Evaluate transcript using both the question and the answer
+        evaluation_result = await asyncio.to_thread(
+            evaluate_transcript, response.questionText, transcript_text
+        )
 
         return {
             "questionId": response.questionId,
@@ -109,18 +115,22 @@ def transcribe_audio_from_bytes(identifier: str, audio_bytes: bytes) -> dict:
     print(transcript)
     return transcript
 
-def evaluate_transcript(transcript: str) -> dict:
+def evaluate_transcript(question_text: str, answer_text: str) -> dict:
     """
-    Sends the transcript to OpenAI for evaluation.
-    The prompt instructs the model to evaluate the transcript on a scale of 1 to 100
-    and return a JSON object with keys:
+    Sends the question and its transcribed answer to OpenAI for evaluation.
+    The prompt instructs the model to evaluate how well the answer addresses the question
+    on a scale of 1 to 100 and return a JSON object with keys:
       - evaluation: an integer score (1-100, where 1 is worst and 100 is best)
       - comment: a brief feedback comment.
     """
     prompt = (
-        "Evaluate the following interview transcript on a scale of 1 to 100, where 1 is the worst and 100 is the best. "
-        "Also provide a brief comment explaining your evaluation. Return the result as a JSON object with keys 'evaluation' and 'comment'.\n\n"
-        f"Transcript:\n{transcript}"
+        "Evaluate the following question and answer on a scale of 1 to 100, where 1 is the worst and 100 is the best. "
+        "Consider how well the answer addresses the question, as well as clarity, correctness, and completeness. "
+        "If the answer is exactly or almost identical to the question, assign a score of 80. "
+        "Also provide a brief comment explaining your evaluation. "
+        "Return the result as a valid JSON object with keys 'evaluation' and 'comment'.\n\n"
+        f"Question:\n{question_text}\n\n"
+        f"Answer:\n{answer_text}"
     )
     try:
         completion = openai.ChatCompletion.create(
