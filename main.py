@@ -82,6 +82,39 @@ async def clear_history():
     return {"message": "Chat history has been cleared"}
 
 
+@app.get("/questions")
+async def generate_questions():
+    """
+    Generates interview questions for a front-end React developer using OpenAI.
+    The returned questions are expected to be a JSON array of objects with the keys:
+    id, text, type, and category.
+    """
+    prompt = (
+        "Generate a JSON array of 8 interview questions for a front-end React developer. "
+        "Each question should be an object with the following keys: "
+        "id (string), text (the question text), type (technical or behavioral), and category (e.g., 'Performance', 'React Basics', etc.). "
+        "Example object: {\"id\": \"1\", \"text\": \"How would you optimize a slow React application?\", \"type\": \"technical\", \"category\": \"Performance\"}. "
+        "Return only the JSON array."
+    )
+
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that generates interview questions."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=300,
+        )
+        response_text = completion.choices[0].message.content.strip()
+        # Attempt to parse the response as JSON
+        questions = json.loads(response_text)
+        return questions
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating questions: {e}")
+
+
 def transcribe_audio(file: UploadFile):
     # Save the blob first
     with open(file.filename, 'wb') as buffer:
