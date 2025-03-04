@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 openai.api_key = os.getenv("OPEN_AI_KEY")
-openai.organization = os.getenv("OPEN_AI_ORG")
+# openai.organization = os.getenv("OPEN_AI_ORG")
 elevenlabs_key = os.getenv("ELEVENLABS_KEY")
 
 app = FastAPI()
@@ -82,13 +82,13 @@ async def clear_history():
     return {"message": "Chat history has been cleared"}
 
 
-# Functions
-def transcribe_audio(file):
+def transcribe_audio(file: UploadFile):
     # Save the blob first
     with open(file.filename, 'wb') as buffer:
         buffer.write(file.file.read())
-    audio_file = open(file.filename, "rb")
-    transcript = openai.Audio.transcribe("whisper-1", audio_file)
+    with open(file.filename, "rb") as audio_file:
+        transcript = openai.Audio.transcribe(model="whisper-1", file=audio_file)
+    os.remove(file.filename)
     print(transcript)
     return transcript
 
@@ -101,10 +101,11 @@ def transcribe_audio_from_bytes(identifier: str, audio_bytes: bytes) -> dict:
     with open(temp_filename, "wb") as f:
         f.write(audio_bytes)
     with open(temp_filename, "rb") as audio_file:
-        transcript = openai.Audio.transcribe("whisper-1", audio_file)
+        transcript = openai.Audio.transcribe(model="whisper-1", file=audio_file)
     os.remove(temp_filename)
     print(transcript)
     return transcript
+
 
 def get_chat_response(user_message):
     messages = load_messages()
