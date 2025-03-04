@@ -1,11 +1,14 @@
-from fastapi import FastAPI, UploadFile
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-
-import openai
 import os
 import json
+import base64
 import requests
+import openai
+from fastapi import FastAPI, UploadFile, HTTPException, File, Form
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -20,6 +23,7 @@ origins = [
     "http://localhost:5173",
     "http://localhost:8000",
     "http://localhost:3000",
+    "http://localhost:8080",
 ]
 
 app.add_middleware(
