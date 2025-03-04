@@ -3,6 +3,7 @@ import json
 import base64
 import requests
 import openai
+import asyncio
 from fastapi import FastAPI, UploadFile, HTTPException, File, Form
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,8 +49,7 @@ class QuestionResponse(BaseModel):
 
 @app.post("/submit-responses")
 async def submit_responses(responses: List[QuestionResponse]):
-    results = []
-    for response in responses:
+    async def process_response(response: QuestionResponse):
         try:
             audio_data = base64.b64decode(response.audioBlob)
         except Exception as e:
@@ -57,19 +57,21 @@ async def submit_responses(responses: List[QuestionResponse]):
                 status_code=400,
                 detail=f"Error decoding audio for question {response.questionId}: {str(e)}"
             )
-        transcript = transcribe_audio_from_bytes(response.questionId, audio_data)
+        transcript = await asyncio.to_thread(transcribe_audio_from_bytes, response.questionId, audio_data)
         transcript_text = transcript.get("text") if isinstance(transcript, dict) else transcript
 
-        evaluation_result = evaluate_transcript(transcript_text)
-        results.append({
+        evaluation_result = await asyncio.to_thread(evaluate_transcript, transcript_text)
+
+        return {
             "questionId": response.questionId,
             "questionText": response.questionText,
             "answerText": transcript_text,
             "score": evaluation_result.get("evaluation", 50),
             "feedback": evaluation_result.get("comment", "No comment provided.")
-        })
-    return {"results": results}
+        }
 
+    results = await asyncio.gather(*(process_response(resp) for resp in responses))
+    return {"results": results}
 
 def transcribe_audio(file: UploadFile):
     """
@@ -89,7 +91,6 @@ def transcribe_audio(file: UploadFile):
     print(transcript)
     return transcript
 
-
 def transcribe_audio_from_bytes(identifier: str, audio_bytes: bytes) -> dict:
     """
     Writes binary audio data to a temporary file and transcribes it using OpenAI Whisper.
@@ -107,7 +108,6 @@ def transcribe_audio_from_bytes(identifier: str, audio_bytes: bytes) -> dict:
             os.remove(temp_filename)
     print(transcript)
     return transcript
-
 
 def evaluate_transcript(transcript: str) -> dict:
     """
@@ -140,7 +140,6 @@ def evaluate_transcript(transcript: str) -> dict:
         return {"evaluation": 50, "comment": "Could not evaluate transcript."}
 
 
-
 @app.post("/talk")
 async def post_audio(file: UploadFile):
     user_message = transcribe_audio(file)
@@ -170,7 +169,7 @@ async def generate_questions():
     Each question is returned as an object with an id, text, type, and category.
     """
     tech_prompt = (
-        "Generate 2 interview questions focused on React performance. "
+        "Generate 3 interview questions focused on React performance. "
         "Return only the questions, each on a new line, with no numbering or additional commentary."
     )
 
@@ -191,7 +190,7 @@ async def generate_questions():
     tech_lines = [line.strip() for line in tech_response_text.split("\n") if line.strip()]
 
     behav_prompt = (
-        "Generate 1 behavioral interview questions focused on teamwork and communication in a software development environment. "
+        "Generate 2 behavioral interview questions focused on teamwork and communication in a software development environment. "
         "Return only the questions, each on a new line, with no numbering or additional commentary."
     )
 
